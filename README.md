@@ -1,9 +1,10 @@
-# ub
+# Summer School, UB, Big Data for Economics
 
 This is the material for the crash course "Big Data for Economics" (July 2018)
+
 See http://www.ub.edu/school-economics/events/summer-school-big-data-economics/
 
-Lecture 1: Introduction : Why Big Data brings New Questions
+Lecture 1: Introduction : Why Big Data brings New Questions 
 
 Lecture 2: Simulation Based Techniques & Bootstrap
 
