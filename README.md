@@ -4,7 +4,7 @@ This is the material for the crash course "Big Data for Economics" (July 2018)
 
 See http://www.ub.edu/school-economics/events/summer-school-big-data-economics/
 
-![Alt text](https://github.com/freakonometrics/ub/blob/master/big-data-unicorns.jpeg?raw=true "Title")
+![Alt text](https://github.com/freakonometrics/ub/blob/master/big-data-unicorns.jpeg?raw=true "Title" | width=400)
 
 Lecture 1: Introduction : Why Big Data brings New Questions 
 
