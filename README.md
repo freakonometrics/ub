@@ -4,6 +4,9 @@ This is the material for the crash course "Big Data for Economics" (July 2018)
 
 See http://www.ub.edu/school-economics/events/summer-school-big-data-economics/
 
+[logo]: https://github.com/freakonometrics/ub/blob/master/big-data-unicorns.jpeg "Unicorns"
+
+
 Lecture 1: Introduction : Why Big Data brings New Questions 
 
 Lecture 2: Simulation Based Techniques & Bootstrap
