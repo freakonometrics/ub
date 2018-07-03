@@ -1,0 +1,783 @@
+---
+title: "Big Data for Economics"
+author: "Arthur Charpentier"
+date: "July 2018"
+output:
+  html_document:
+    highlight: pygments
+    toc: true
+    toc_depth: 6
+    toc_float: true
+    number_sections: true
+---
+
+Arthur Charpentier, <a href = "http://twitter.com/freakonometrics">@freakonometrics</a>
+
+```{r setup, include=FALSE}
+options(width = 80)
+rm(list=ls())
+#options(width = 80)
+library(knitr)
+library(htmlwidgets)
+library("breakDown",verbose=FALSE,quietly=TRUE,warn.conflicts=FALSE)
+library(plyr,verbose=FALSE,quietly=TRUE,warn.conflicts=FALSE)
+library("DALEX",verbose=FALSE,quietly=TRUE,warn.conflicts=FALSE)
+library(dplyr,verbose=FALSE,quietly=TRUE,warn.conflicts=FALSE)
+library(tm,verbose=FALSE,quietly=TRUE,warn.conflicts=FALSE)
+library(VGAM,verbose=FALSE,quietly=TRUE,warn.conflicts=FALSE)
+library(data.table,verbose=FALSE,quietly=TRUE,warn.conflicts=FALSE)
+library(caret,verbose=FALSE,quietly=TRUE,warn.conflicts=FALSE)
+library(glmnet,verbose=FALSE,quietly=TRUE,warn.conflicts=FALSE)
+library(caret,verbose=FALSE,quietly=TRUE,warn.conflicts=FALSE)
+library(recipes,verbose=FALSE,quietly=TRUE,warn.conflicts=FALSE)
+library(rgl,verbose=FALSE,quietly=TRUE,warn.conflicts=FALSE)
+knitr::opts_chunk$set(echo = TRUE)
+knit_hooks$set(webgl = hook_webgl)
+```
+
+Slides available at <a href = "https://github.com/freakonometrics/ub">https://github.com/freakonometrics/ub</a>
+
+Additional information at  <a href = "http://freakonometrics.hypotheses.org">http://freakonometrics.hypotheses.org</a>
+
+
+
+Download RStudio from <a href = "http://www.rstudio.com">http://www.rstudio.com</a>
+The first step is to load most of the packages
+```{r}
+# library(devtools)
+# devtools::install_github("pbiecek/breakDown")
+# devtools::install_github("redichh/shapleyr")
+# list.of.packages <- c("rTensor","HistData","DALEX","parallel","quantreg","auditor","mlr","lime","breakDown","lpSolve","expectreg","VGAMdata","McSpatial","MASS","VIM","locfit","bsplines","rgeos","rgdal","maptools","cartography","geosphere","RDDtools","RColorBrewer","glmnet","caret","splines","factoextra","ROCR","nnet","neuralnet","quadprog","rpart","rpart.plot","gbm","networkD3")
+# new.packages <- list.of.packages[!(list.of.packages %in% installed.packages()[,"Package"])]
+# if(length(new.packages)) install.packages(new.packages)
+```
+
+# Introduction : Why Big Data brings New Questions
+
+![source <a href = "http://dilbert.com/strip/2018-04-03">Dilbert, April 3rd, 2018</a>](http://freakonometrics.hypotheses.org/files/2018/05/dt180403.gif)
+
+## Text Based Data
+
+## Network Data
+
+```{r}
+download.file("https://www.macalester.edu/~abeverid/data/stormofswords.csv","got.csv")
+GoT=read.csv("got.csv")
+library(networkD3, quietly=TRUE)
+simpleNetwork(GoT[,1:2])
+```
+
+```{r}
+M=(rbind(as.matrix(GoT[,1:2]),as.matrix(GoT[,2:1])))
+nodes=unique(M[,1])
+friends=function(x) as.character(M[which(M[,1]==x),2])
+friends_of_friends=function(y) (Vectorize(function(x) length(friends(x)))(friends(y)))
+nb_friends = Vectorize(function(x) length(friends(x)))
+nb_friends_of_friends = Vectorize(function(x) mean(friends_of_friends(x)))
+Nb=nb_friends(nodes)
+Nb2=nb_friends_of_friends(nodes)
+hist(Nb,breaks=0:40,col=rgb(1,0,0,.2),border="white",probability = TRUE)
+hist(Nb2,breaks=0:40,col=rgb(0,0,1,.2),border="white",probability = TRUE,add=TRUE)
+lines(density(Nb),col="red",lwd=2)
+lines(density(Nb2),col="blue",lwd=2)
+```
+
+## Tensor Data
+
+```{r}
+library(rTensor)
+?tucker
+```
+
+# Quick Summary of Econometrics 101
+
+
+## Datasets
+
+```{r}
+chicago = read.table("http://freakonometrics.free.fr/chicago.txt",header=TRUE,sep=";")
+tail(chicago)
+myocarde = read.table("http://freakonometrics.free.fr/myocarde.csv",head=TRUE, sep=";")
+tail(myocarde)
+myocarde$PRONO = (myocarde$PRONO=="SURVIE")*1
+x1 = c(.4,.55,.65,.9,.1,.35,.5,.15,.2,.85)
+x2 = c(.85,.95,.8,.87,.5,.55,.5,.2,.1,.3)
+y  = c(1,1,1,1,1,0,0,1,0,0)
+df = data.frame(x1=x1,x2=x2,y=as.factor(y))
+tail(df)
+Davis=read.table(
+"http://socserv.socsci.mcmaster.ca/jfox/Books/Applied-Regression-2E/datasets/Davis.txt")
+Davis[12,c(2,3)]=Davis[12,c(3,2)]
+tail(Davis)
+Y=Davis$height
+```
+
+## Historical Aspects
+<a href = "http://galton.org/criticism/10-14-02/merrivale-1870-her-gen-review.pdf">Galton (1870) Heriditary Genius</a>
+
+```{r}
+library(HistData)
+attach(Galton)
+Galton$count <- 1
+df <- aggregate(Galton, by=list(parent,child), FUN=sum)[,c(1,2,5)]
+plot(df[,1:2],cex=sqrt(df[,3]/3),xlab="Height of father",ylab="Height to son")
+abline(a=0,b=1,lty=2)
+abline(lm(child~parent,data=Galton),col="red",lwd=2)
+coefficients(lm(child~parent,data=Galton))[2]
+```
+
+Consider a **linear model** $y_i=\boldsymbol{x}_i^T\boldsymbol{\beta} + \varepsilon_i$, with matrix notation $\mathbf{y}=\boldsymbol{X}\boldsymbol{\beta}+\boldsymbol{\varepsilon}$. Assume
+
+* correct specification
+* exogeneity, i.e. $\mathbb{E}[\varepsilon|\boldsymbol{X}]=0$. Thus, residuals are centered $\mathbb{E}[\varepsilon]=0$ and covariates are uncorrelated with the errors $\mathbb{E}[\boldsymbol{X}^T\varepsilon]=\boldsymbol{0}$
+* covariates are linearly independent, i.e. $\mathbb{P}[\text{rank}(\boldsymbol{X})=p]=1$
+* spherical errors, i.e. $\text{Var}[\boldsymbol{\varepsilon}|\boldsymbol{X}]=\sigma^2 \mathbb{I}$. Thus, residuals are homoscedasticity - $\text{Var}[{\varepsilon}_i|\boldsymbol{X}]=\sigma^2$ - and non-correlated $\mathbb{E}[\varepsilon_i\varepsilon_j|\boldsymbol{X}]=0$, $\forall i\neq j$.
+* gaussian errors, i.e. $\boldsymbol{\varepsilon}|\boldsymbol{X}\sim\mathcal{N}(\boldsymbol{0},\sigma^2\mathbb{I})$
+
+$\displaystyle{\widehat{\boldsymbol{\beta}}=(\boldsymbol{X}^T\boldsymbol{X})^{-1} \boldsymbol{X}^T\boldsymbol{y}}$ is the **least-square estimator** of $\boldsymbol{\beta}$, obtained as
+$$
+\widehat{\boldsymbol{\beta}} = \text{argmin}\left\lbrace
+\sum_{i=1}^n (y_i-\boldsymbol{x}_i^T\boldsymbol{\beta})^2
+\right\rbrace.
+$$
+
+## Uncertainty in Linear Regression
+
+```{r}
+plot(chicago$X_2,chicago$Fire)
+reg <- lm(Fire~X_2, data=chicago)
+vx <- seq(min(chicago$X_2)-5,max(chicago$X_2)+5,length=151)
+vy <- predict(reg, newdata=data.frame(X_2=vx))
+lines(vx, vy, lwd=2, col="red")
+```
+
+```{r}
+summary(reg)
+confint(reg)
+beta1 = summary(reg)$coefficients[2,]
+vbx <- seq(qnorm(.001,beta1[1],beta1[2]),
+           qnorm(.999,beta1[1],beta1[2]),length=201)
+vby <- dnorm(vbx, beta1[1],beta1[2])
+plot(vbx,vby,lwd=2,type="l")
+abline(v=0,lty=2,col="red")
+```
+
+
+```{r}
+vy2 <- predict(reg, newdata=data.frame(X_2=vx), interval = "confidence")
+plot(chicago$X_2,chicago$Fire)
+polygon(c(vx,rev(vx)),c(vy2[,2],rev(vy2[,3])),col=rgb(1,0,0,.4),border=NA)
+lines(vx, vy2[,1], lwd=2, col="red")
+lines(vx, vy2[,2], lty=2, col="red")
+lines(vx, vy2[,3], lty=2, col="red")
+```
+
+## Multiple (Bivariate) Regression
+
+```{r}
+reg=lm(Fire~X_2+X_3,data=chicago)
+summary(reg)
+y=function(x2,x3) predict(reg,newdata=data.frame(X_2=x2,X_3=x3))
+VX2=seq(0,80)
+VX3=seq(5,25)
+VY=outer(VX2,VX3,y)
+image(VX2,VX3,VY,xlab="",ylab="")
+contour(VX2,VX3,VY,add=TRUE)
+```
+
+```{r}
+persp(VX2,VX3,VY,theta=30,ticktype="detailed")
+```
+
+```{r}
+library(ellipse)
+plot(ellipse(reg,which=c(2,3)),type="l",col="red",lwd=2)
+abline(v=confint(reg)[2,],col="blue",lwd=2)
+abline(h=confint(reg)[3,],col="blue",lwd=2)
+```
+
+## Multiple Regression
+
+```{r}
+reg=lm(Fire~.,data=chicago)
+summary(reg)
+```
+
+```{r}
+# step(reg,direction = "backward")
+```
+
+## Testing and Regression
+
+## "Online Updates"" Properties
+
+Consider the context of time series. We have a sample $\{y_1,\cdots,y_t\}$, consider a model $\widehat{m}_t$. What if we have a new observation, $y_{t+1}$ ? Can we easily retrive $\widehat{m}_{t+1}$ ?
+
+(see <a href = "https://en.wikipedia.org/wiki/Online_machine_learning">wikipedia</a>).
+
+## Interpretations
+
+```{r}
+library("DALEX")
+apartments_lm_model <- lm(m2.price ~ construction.year + surface + floor + no.rooms + district, data = apartments)
+summary(apartments_lm_model)
+library(auditor)
+```
+
+```{r}
+explainer_lm <- DALEX::explain(apartments_lm_model, data = apartmentsTest[,2:6], y = apartmentsTest$m2.price)
+```
+
+```{r}
+predicted_mi2_lm <- predict(apartments_lm_model, apartmentsTest)
+sqrt(mean((predicted_mi2_lm - apartmentsTest$m2.price)^2))
+```
+
+Model explainers, with continuous variable response `construction.year` or `surface`
+
+```{r}
+sv_lm  <- variable_response(explainer_lm, variable =  "construction.year", type = "pdp")
+plot(sv_lm)
+sv_lm  <- variable_response(explainer_lm, variable =  "surface", type = "pdp")
+plot(sv_lm)
+```
+
+or for categorical variable `district`
+
+```{r}
+svd_lm  <- variable_response(explainer_lm, variable = "district", type = "factor")
+plot(svd_lm)
+```
+
+```{r}
+audit_lm <- audit(explainer_lm)
+plotResidual(audit_lm, variable = "construction.year")
+vi_lm <- variable_importance(explainer_lm, loss_function = loss_root_mean_square)
+vi_lm
+plot(vi_lm)
+```
+
+```{r}
+library(mlr)
+apartments_task <- makeRegrTask(data = apartments, target = "m2.price")
+apartments_lm_mlr <- mlr::train("regr.lm", apartments_task)
+library(lime)
+explained_prediction <- apartments[836, ]
+lime_explainer <- lime(apartments, model = apartments_lm_mlr)
+lime_explanation <- lime::explain(apartments[836, ], explainer = lime_explainer,  n_features = 5)
+plot_features(lime_explanation)
+```
+
+```{r}
+library(live)
+set.seed(33)
+new_dataset <- sample_locally2(data = apartments,
+                               explained_instance = apartments[836, ],
+                               explained_var = "m2.price",
+                               size = 1500)
+with_predictions <- add_predictions2(new_dataset, apartments_lm_model)
+live_explanation <- fit_explanation2(with_predictions, "regr.lm")
+live_explanation
+```
+
+```{r}
+plot_explanation2(live_explanation, "forest")
+plot_explanation2(live_explanation, "waterfall")
+```
+
+```{r}
+#breakdown_linear <- single_prediction(explainer_lm, apartments[836, ])
+#plot(breakdown_linear)
+br <- broken(apartments_lm_model, apartments[836, ], baseline = "Intercept")
+br
+plot(br) 
+```
+
+```{r}
+library(breakDown)
+predict.function <- function(model, new_observation) stats::predict.lm(model, newdata=new_observation)
+explain_1 <- broken(apartments_lm_model, apartments[836, ], data = apartments, predict.function = predict.lm, direction = "down")
+plot(explain_1)
+
+#explain_2 <- broken(apartments_lm_model, apartments[834, ], data = apartments, predict.function = predict.lm, direction = "down", keep_distributions = TRUE)
+#plot(explain_2, plot_distributions = TRUE)
+#explain_3 <- broken(apartments_lm_model, apartments[834, ], data = apartments, predict.function = predict.lm, direction = "up", keep_distributions = TRUE)
+#plot(explain_3, plot_distributions = TRUE)
+```
+
+For model performance
+
+```{r}
+mp_lm <- model_performance(explainer_lm)
+mp_lm
+plot(mp_lm, geom = "boxplot")
+```
+
+```{r}
+ggplot(mp_lm, aes(observed, diff)) + geom_point() + geom_smooth(se = FALSE) +
+  xlab("Observed") + ylab("Predicted - Observed") +
+  ggtitle("Diagnostic plot for the linear model") + theme_mi2()
+```
+
+```{r}
+new_apartment <- apartmentsTest[1234, ]
+new_apartment
+new_apartment_lm <- single_prediction(explainer_lm,
+                                      observation = new_apartment)
+```
+
+# Simulation Based Techniques & Bootstrap
+
+![source <a href = "http://dilbert.com/strip/2001-10-25">Dilbert, October 25, 2001</a>](http://freakonometrics.hypotheses.org/files/2018/05/RANDOM.jpeg)
+
+## Monte Carlo Simulations
+
+```{r}
+runif(30)
+runif(30)
+set.seed(1)
+runif(30)
+set.seed(1)
+runif(30)
+```
+
+```{r}
+h=function(u) cos(u*pi/2)
+integrate(h,0,1)
+mean(h(runif(1e6)))
+M=rep(NA,1000)
+for(i in 1:1000) M[i]=mean(h(runif(1e6)))
+mean(M)
+sd(M)
+```
+
+```{r}
+F = ecdf(Y)
+F(180)
+library(MASS)
+fitdistr(Y,"normal")
+ mean(Y)
+ sd(Y)
+y0 = pnorm(140:205,170,9)
+y = Vectorize(F)(140:205)
+plot(140:205,y,col="red",type="s")
+D = rep(NA,200)
+for(s in 1:200){
+   X = rnorm(length(Y),170,9)
+   y = Vectorize(ecdf(X))(140:205)
+   lines(140:205,y,col=rgb(0,0,1,.4))
+   D[s] = max(y-y0)
+}
+lines(140:205,y,col="red",type="s")
+```
+
+```{r}
+hist(D,probability = TRUE	)
+lines(density(D),col="blue")
+(demp = max(abs(Vectorize(ecdf(Y))(140:205)-y0)))
+mean(D>demp)
+ks.test(Y, "pnorm",170,9)
+```
+
+## Boostraping
+
+```{r}
+n = 20
+ns = 1e6
+ xbar = rep(NA,ns)
+ for(i in 1:ns){
+   x = (rchisq(n,df=1)-1)/sqrt(2)
+   xbar[i] = mean(x)
+ }
+ u = seq(-.7,.8,by=.001)
+ v = dnorm(u,sd=1/sqrt(20))
+ plot(u,v,col="black")
+ lines(density(xbar),col="red")
+ set.seed(1)
+ x = (rchisq(n,df=1)-1)/sqrt(2)
+ for(i in 1:ns){
+   xs = sample(x,size=n,replace=TRUE)
+   xbar[i] = mean(xs)
+ }
+lines(density(xbar),col="blue")
+```
+
+## Bootstrap for Econometrics
+
+```{r}
+ VS=matrix(NA,15,3)
+ for(s in 1:15){
+ simu=function(n = 10){
+ get_i = function(i){
+   x = rnorm(n, sd=sqrt(6));
+   S = matrix(sample(x, size=n*1000, replace=TRUE),ncol=1000)
+   ThetaBoot = exp(colMeans(S))
+   Bias = mean(ThetaBoot)-exp(mean(x))
+   theta=exp(mean(x))/exp(.5*var(x)/n)
+   c(exp(mean(x)),exp(mean(x))-Bias, theta)
+ }
+ res = lapply(1:1000, get_i)
+ res = do.call(rbind, res)
+ bias = colMeans(res-1)
+ return(bias)
+ }
+ VS[s,]=simu(10*s)
+ }
+VS
+```
+
+```{r}
+ plot(cars)
+ reg=lm(dist~speed,data=cars)
+ abline(reg,col="red")
+ x=21
+ predict(reg,interval="confidence", level=.9,newdata=data.frame(speed=x))
+ Yx=rep(NA,500)
+ for(s in 1:500){
+ indice=sample(1:n,size=n,replace=TRUE)
+ base=cars[indice,]
+ regb=lm(dist~speed,data=base)
+ abline(regb,col="light blue")
+ points(x,predict(regb,newdata=data.frame(speed=x)))
+ Yx[s]=predict(reg,newdata=data.frame(speed=x))
+ }
+```
+
+```{r}
+predict(reg,interval="confidence", level=.9,newdata=data.frame(speed=x))
+hist(Yx,proba=TRUE)
+boxplot(Yx,horizontal=TRUE)
+lines(density(Yx))
+quantile(Yx,c(.05,.95))
+```
+
+```{r}
+ plot(cars)
+ reg=lm(dist~speed,data=cars)
+ abline(reg,col="red")
+ x=21
+ predict(reg,interval="confidence", level=.9,newdata=data.frame(speed=x))
+ base=cars
+ Yx=rep(NA,500)
+ for(s in 1:500){
+ indice=sample(1:n,size=n,replace=TRUE)
+ base$dist=predict(reg)+residuals(reg)[indice]
+ regb=lm(dist~speed,data=base)
+ abline(reg,col="light blue")
+ points(x,predict(reg,newdata=data.frame(speed=x)))
+ Yx[s]=predict(reg,newdata=data.frame(speed=x))
+ }
+```
+
+```{r}
+predict(reg,interval="confidence", level=.9,newdata=data.frame(speed=x))
+hist(Yx,proba=TRUE)
+boxplot(Yx,horizontal=TRUE)
+lines(density(Yx))
+```
+
+```{r}
+pvf = function(t) mean((1-pf(t,1,length(t)-2))<.05)
+pvq = function(t) mean((1-pchisq(t,1)<.05))
+TABLE= function(n=30){
+ ns = 5000
+ x = c(1.0001,rep(1,n-1))
+ e = matrix(rnorm(n*ns),n)
+ e2 = matrix(runif(n*ns,-3,3),n)
+ e3 = matrix(rt(n*ns,2),n)
+ get_i = function(i){
+ r1 = lm(e[,i]~x)
+ r2 = lm(e2[,i]~x)
+ r3 = lm(e3[,i]~x)
+ t1 = r1$coef[2]^2/vcov(r1)[2,2]
+ t2 = r2$coef[2]^2/vcov(r2)[2,2]
+ t3 = r3$coef[2]^2/vcov(r3)[2,2]
+ c(t1,t2,t3)}
+ 
+# library(parallel)	
+# t = mclapply(1:ns, get_i, mc.cores=50)
+ t = lapply(1:ns, get_i)
+ t = simplify2array(t)
+ rj1 = pvf(t[,1])
+ rj2 = pvf(t[,2])
+ rj3 = pvf(t[,3])
+ rj12 = pvq(t[,1])
+ rj22 = pvq(t[,2])
+ rj32 = pvq(t[,3])
+ ans = rbind(c(rj1,rj2,rj3),c(rj12,rj22,rj32))
+ return(ans) }
+ TABLE(30)
+```
+
+```{r} 
+ ns=1e5
+ PROP=matrix(NA,ns,6)
+ n=30
+ VN=seq(10,140,by=10)
+ for(s in 1:ns){
+ X=rnorm(n)
+ E=rnorm(n)
+ Y=1+X+E
+ reg=lm(Y~X)
+ T=(coefficients(reg)[2]-1)^2/ vcov(reg)[2,2]
+ PROP[s,1]=T>qf(.95,1,n-2)
+ PROP[s,2]=T>qchisq(.95,1)
+ E=rt(n,df=3)
+ Y=1+X+E
+ reg=lm(Y~X)
+ T=(coefficients(reg)[2]-1)^2/ vcov(reg)[2,2]
+ PROP[s,3]=T>qf(.95,1,n-2)
+ PROP[s,4]=T>qchisq(.95,1)
+ E=runif(n)*4-2
+ Y=1+X+E
+ reg=lm(Y~X)
+ T=(coefficients(reg)[2]-1)^2/ vcov(reg)[2,2]
+ PROP[s,5]=T>qf(.95,1,n-2)
+ PROP[s,6]=T>qchisq(.95,1)
+ }
+apply(PROP,2,mean)
+```
+
+
+```{r}
+ reg=lm(dist~speed,data=cars)
+ E=residuals(reg)
+ Y=predict(reg)
+ beta1=rep(NA,2000)
+ MB=MV=MQ=matrix(NA,10,2000)
+ for(i in 1:10){
+ BIAS=VAR=QUANT=beta1
+  for(b in 1:2000){
+ carsS=data.frame(speed=cars$speed,
+ dist=Y+sample(E,size=50,replace=TRUE))
+ beta1[b]=lm(dist~speed,data=carsS)$coefficients[2]
+ BIAS[b]=mean(beta1[1:b])-reg$coefficients[2]
+ VAR[b]=var(beta1[1:b])
+ QUANT[b]=quantile(beta1[1:b],.95)
+ }
+ MB[i,]=BIAS
+ MV[i,]=VAR
+ MQ[i,]=QUANT
+ }
+ MB
+ MV
+ MQ
+```
+
+```{r}
+x1 = c(.4,.55,.65,.9,.1,.35,.5,.15,.2,.85)
+x2 = c(.85,.95,.8,.87,.5,.55,.5,.2,.1,.3)
+y  = c(1,1,1,1,1,0,0,1,0,0)
+df = data.frame(x1=x1,x2=x2,y=as.factor(y))
+L_logit = list()
+n = nrow(df)
+for(s in 1:100){
+  df_s = df[sample(1:n,size=n,replace=TRUE),]
+  L_logit[[s]] = glm(y~., df_s, family=binomial)}
+  p = function(x){
+  nd = data.frame(x1=x[1], x2=x[2]) 
+  unlist(lapply(1:1000,function(z)
+  predict(L_logit[[z]],newdata=nd,type="response")))}
+```
+
+```{r}
+L_logit = list()
+n = nrow(df)
+reg = glm(y~x1+x2, df, family=binomial)
+for(s in 1:100){
+  df_s = df
+  df_s$y = factor(rbinom(n,size=1,prob=predict(reg,type="response")),labels=0:1)
+  L_logit[[s]] = glm(y~., df_s, family=binomial)
+}
+```
+
+# Loss Functions : from OLS to Quantile Regression
+
+```{r}
+# ols <- lm(y~x, data=df)
+# library(quantreg)
+# lad <- rq(y~x, data=df, tau=.5)
+```
+
+## OLS and averaging
+
+## LAD and median
+
+```{r}
+n = 101 
+set.seed(1)
+y = rlnorm(n)
+median(y)
+md=Vectorize(function(m) sum(abs(y-m)))
+optim(mean(y),md)$par
+library(lpSolve)
+A1 = cbind(diag(2*n),0) 
+A2 = cbind(diag(n), -diag(n), 1)
+# r = lp("min", c(rep(1,2*n),0),
+# rbind(A1, A2),c(rep("&gt;=", 2*n), rep("=", n)), c(rep(0,2*n), y))
+# tail(r$solution,1) 
+```
+
+## Quantiles
+
+```{r}
+tau = .3
+quantile(x,tau)
+A1 = cbind(diag(2*n),0) 
+A2 = cbind(diag(n), -diag(n), 1)
+# r = lp("min", c(rep(tau,n),rep(1-tau,n),0),
+# rbind(A1, A2),c(rep("&gt;=", 2*n), rep("=", n)), c(rep(0,2*n), y))
+# tail(r$solution,1) 
+```
+
+## Expectiles
+
+```{r}
+x <- rnorm(99)
+# library(expectreg)
+# e <- expectile(x, probs = seq(0, 1, 0.1))
+```
+
+## Quantile Regression
+
+```{r}
+library(quantreg)
+fit <- rq(dist~speed, data=cars, tau=.5)
+which(predict(fit)==cars$dist)
+```
+
+```{r}
+base=read.table("http://freakonometrics.free.fr/rent98_00.txt",header=TRUE)
+require(lpSolve) 
+tau = .3
+n=nrow(base)
+X = cbind( 1, base$area)
+y = base$rent_euro
+A1 = cbind(diag(2*n), 0,0) 
+A2 = cbind(diag(n), -diag(n), X) 
+# r = lp("min",
+#       c(rep(tau,n), rep(1-tau,n),0,0), rbind(A1, A2),
+#       c(rep("&gt;=", 2*n), rep("=", n)), c(rep(0,2*n), y)) 
+# tail(r$solution,2)
+library(quantreg)
+rq(rent_euro~area, tau=tau, data=base)
+```
+
+```{r}
+plot(base$area,base$rent_euro,xlab=expression(paste("surface (",m^2,")")),
+     ylab="rent (euros/month)",col=rgb(0,0,1,.4),cex=.5)
+sf=0:250
+# yr=r$solution[2*n+1]+r$solution[2*n+2]*sf
+# lines(sf,yr,lwd=2,col="blue")
+tau = .9
+#cr = lp("min",c(rep(tau,n), rep(1-tau,n),0,0), rbind(A1, A2),c(rep(">=", 2*n), rep("=", n)), c(rep(0,2*n), y)) 
+# yr=r$solution[2*n+1]+r$solution[2*n+2]*sf
+# lines(sf,yr,lwd=2,col="blue")
+```
+
+```{r}
+tau = 0.3
+n = nrow(base)
+X = cbind(1, base$area, base$yearc)
+y = base$rent_euro
+#r = lp("min",
+#c(rep(tau, n), rep(1 - tau, n), rep(0, 2 * 3)),
+#cbind(diag(n), -diag(n), X, -X),
+#rep("=", n),y)
+#beta = tail(r$solution, 6)
+#beta = beta[1:3] - beta[3 + 1:3]
+#beta
+library(quantreg)
+rq(rent_euro~area+yearc, tau=tau, data=base)
+```
+
+```{r}
+base = read.table("http://freakonometrics.free.fr/natality2005.txt",header=TRUE,sep=";")
+u = seq(.05,.95,by=.01)
+library(quantreg)
+coefstd = function(u) summary(rq(WEIGHT~SEX+SMOKER+WEIGHTGAIN+BIRTHRECORD+AGE+ BLACKM+ BLACKF+COLLEGE,data=sbase,tau=u))$coefficients[,2]
+coefest = function(u) summary(rq(WEIGHT~SEX+SMOKER+WEIGHTGAIN+BIRTHRECORD+AGE+ BLACKM+ BLACKF+COLLEGE,data=sbase,tau=u))$coefficients[,1]
+CS = Vectorize(coefstd)(u)
+CE = Vectorize(coefest)(u)
+```
+
+```{r}
+base = read.table("http://freakonometrics.free.fr/BWeight.csv")
+base = read.table("http://freakonometrics.free.fr/rent98_00.txt")
+```
+
+```{r}
+library(VGAMdata)
+data(xs.nz)
+```
+
+```{r}
+library(McSpatial)
+data(cookdata)
+fit <- qregcpar(LNFAR~DCBD, nonpar=~LATITUDE+LONGITUDE, taumat=c(.10,.90), kern="bisq", window=.30, distance="LATLONG", data=cookdata)
+```
+
+## Expectile Regression
+
+```{r}
+# library(expectreg)
+# coefstd=function(u) summary(expectreg.ls(WEIGHT~SEX+SMOKER+WEIGHTGAIN+BIRTHRECORD+AGE+ BLACKM+ BLACKF+COLLEGE,data=sbase,expectiles=u,ci = TRUE))[,2]
+# coefest=function(u) summary(expectreg.ls(WEIGHT~SEX+SMOKER+WEIGHTGAIN+BIRTHRECORD+AGE+ BLACKM+ BLACKF+COLLEGE,data=sbase,expectiles=u,ci = TRUE))[,1]
+# CS = Vectorize(coefstd)(u)
+# CE = Vectorize(coefest)(u)
+```
+
+```{r}
+# library(expectreg)
+# fit <- expectreg.ls(rent_euro ~ area, data=munich, expectiles=.75)
+# fit <- expectreg.ls(rent_euro ~ rb(area,"pspline"), data=munich, expectiles=.75)
+```
+
+# Nonlinearities and Discontinuities
+
+## Density Estimation
+
+```{r}
+height = Davis$height
+hist(height)
+plot(density(height, kernel = "rectangular"))
+plot(density(height, kernel = "triangular"))
+plot(density(height, kernel = "epanechnikov"))
+plot(density(height, kernel = "gaussian"))
+```
+
+to be continued...
+
+# Variable and model selection
+
+## Subset Selection
+
+## L2 penalty and Ridge
+
+## L1 penalty and Lasso
+
+## Lasso and Additive Splines
+
+## Lasso and Categorical Variables
+
+## Variable Importance Function
+
+# New Tools for Classification Problems
+
+## Logistic Regression
+
+## ROC Curves
+
+## Support Vector Machine
+
+## Classification Trees
+
+## Random Forests
+
+# New Tools for Time Series & Forecasting
+
+## Series Decomposition
+
+## Deep Learning Techniques
+
+## Probabilistic Forecasts
